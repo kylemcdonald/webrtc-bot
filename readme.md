@@ -48,3 +48,32 @@ To deactivate the virtual environment when you're done, simply run:
 ```
 deactivate
 ```
+
+## Debugging
+
+This is how it should look when the app is running and processing frames:
+
+```
+$ ss -tulpn | grep python
+udp   UNCONN 0      0           10.124.0.4:55955      0.0.0.0:*    users:(("python",pid=5081,fd=11))
+udp   UNCONN 0      0            10.48.0.7:56389      0.0.0.0:*    users:(("python",pid=5081,fd=10))
+udp   UNCONN 0      0      146.190.169.113:57614      0.0.0.0:*    users:(("python",pid=5081,fd=9))
+tcp   LISTEN 0      128            0.0.0.0:8443       0.0.0.0:*    users:(("python",pid=5081,fd=7))
+tcp   LISTEN 0      128               [::]:8443          [::]:*    users:(("python",pid=5081,fd=6))
+```
+
+This should show the NAT type (ideally open):
+
+```
+$ sudo apt install stun-client
+$ stun stun.l.google.com:19302
+STUN client version 0.97
+Primary: Open
+Return value is 0x000001
+```
+
+- 0x000001: means "Success" and corresponds to an open NAT
+- 0x000002: full cone NAT
+- 0x000003: restricted cone NAT
+- 0x000004: port restricted cone NAT
+- 0x000005: symmetric NAT (which can cause issues with WebRTC)
