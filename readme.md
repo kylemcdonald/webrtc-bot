@@ -2,6 +2,13 @@
 
 ## Setup
 
+0. Install Python (if not already installed):
+
+   ```
+   sudo apt update
+   sudo apt install -y python3 python3-pip
+   ```
+
 1. Clone the repository:
    ```
    git clone https://github.com/kylemcdonald/webrtc-bot.git
