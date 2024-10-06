@@ -1,14 +1,11 @@
 import asyncio
 import json
 import logging
-import cv2
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaRelay
 import threading
 import queue
-import numpy as np
-import time
 import ssl
 
 logging.basicConfig(level=logging.INFO)

@@ -49,6 +49,28 @@ To deactivate the virtual environment when you're done, simply run:
 deactivate
 ```
 
+## Docker Setup
+
+Alternatively, you can use Docker to run the application:
+
+1. Make sure you have Docker installed on your system.
+
+2. Build the Docker image:
+   ```
+   docker build -t webrtcbot .
+   ```
+
+3. Run the Docker container:
+   ```
+   docker run -it --rm --net host webrtcbot
+   ```
+
+Note that if you try to run the Docker container another way, it might not work due to the huge port range required by WebRTC. This is indicated in the Dockerfile as `EXPOSE 49152-65535/udp` but it's very common for some of these ports to be in use. I followed the tips in [this article](https://flashphoner.com/load-webrtc-with-containers-or-how-i-ran-wcs-in-docker/).
+
+4. Open a web browser and navigate to `https://localhost:8443`
+
+Note: You will still need to accept the self-signed certificate warning in your browser.
+
 ## Debugging
 
 This is how it should look when the app is running and processing frames:
