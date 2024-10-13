@@ -109,7 +109,8 @@
     let canvas;
     let ctx;
     let startTime;
-    let frameCount = 0;
+    let sendFrameCount = 0;
+    let receiveFrameCount = 0;
     let bytesSent = 0;
     let bytesReceived = 0;
     let lastUpdateTime;
@@ -179,6 +180,7 @@
           remoteCtx.drawImage(img, 0, 0);
           bytesReceived += event.data.size;
           lastBytesReceived = event.data.size;
+          receiveFrameCount++;
           URL.revokeObjectURL(img.src);
         };
         img.src = URL.createObjectURL(new Blob([event.data], { type: 'image/jpeg' }));
@@ -195,7 +197,7 @@
         ws.send(blob);
         bytesSent += blob.size;
         lastBytesSent = blob.size;
-        frameCount++;
+        sendFrameCount++;
         updateDebugInfo();
 
         requestVideoFrame(); // Request the next frame
@@ -207,14 +209,16 @@
       if (now - lastUpdateTime < 1000) return;
 
       const elapsedTime = (now - startTime) / 1000;
-      const fps = (frameCount / elapsedTime).toFixed(2);
+      const sendFps = (sendFrameCount / elapsedTime).toFixed(2);
+      const receiveFps = (receiveFrameCount / elapsedTime).toFixed(2);
       const sendBandwidthKbps = ((bytesSent / 1024) / elapsedTime).toFixed();
       const receiveBandwidthKbps = ((bytesReceived / 1024) / elapsedTime).toFixed();
       const lastBytesReceivedKb = (lastBytesReceived / 1024).toFixed();
       const lastBytesSentKb = (lastBytesSent / 1024).toFixed();
 
       const debugInfo = `
-        FPS: ${fps}
+        Send FPS: ${sendFps}
+        Receive FPS: ${receiveFps}
         Send Bandwidth: ${sendBandwidthKbps} Kbps
         Receive Bandwidth: ${receiveBandwidthKbps} Kbps
         Last Sent: ${lastBytesSentKb} Kb
