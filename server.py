@@ -19,30 +19,29 @@ class ImageProcessor:
 
     def process_images(self):
         while True:
-            img = self.input_queue.get()
-            if img is None:
-                break
-            
-            # Invert the image
-            inverted_img = img # cv2.bitwise_not(img)
-            
             try:
-                self.output_queue.put(inverted_img, block=False)
-            except queue.Full:
-                self.output_queue.get()
-                self.output_queue.put(inverted_img, block=False)
-
-    def process(self, img):
-        try:
-            self.input_queue.put(img, block=False)
-        except queue.Full:
-            self.input_queue.get()
-            self.input_queue.put(img, block=False)
-
-        try:
-            return self.output_queue.get(block=False)
-        except queue.Empty:
-            return img
+                data = self.input_queue.get(timeout=1)
+                if data is None:
+                    break
+                
+                # Decode the image
+                nparr = np.frombuffer(data, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                # Invert the image
+                processed_img = img # cv2.bitwise_not(img)
+                
+                # Encode the processed image to JPEG with reduced quality
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 10]
+                _, buffer = cv2.imencode('.jpg', processed_img, encode_param)
+                buffer = buffer.tobytes()
+                
+                try:
+                    self.output_queue.put(buffer, block=False)
+                except queue.Full:
+                    pass
+            except queue.Empty:
+                pass
 
     def stop(self):
         self.input_queue.put(None)
@@ -62,19 +61,16 @@ async def websocket_handler(request):
     try:
         async for msg in ws:
             if msg.type == WSMsgType.BINARY:
-                # Decode the image
-                nparr = np.frombuffer(msg.data, np.uint8)
-                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                # Process the image
-                processed_img = processor.process(img)
-
-                # Encode the processed image to JPEG with reduced quality
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 10]
-                _, buffer = cv2.imencode('.jpg', processed_img, encode_param)
+                try:
+                    processor.input_queue.put(msg.data, block=False)
+                except queue.Full:
+                    pass
                 
-                # Send the processed image back as binary data
-                await ws.send_bytes(buffer.tobytes())
+                try:
+                    buffer = processor.output_queue.get(block=False)
+                    await ws.send_bytes(buffer)
+                except queue.Empty:
+                    pass
             elif msg.type == WSMsgType.ERROR:
                 logger.error('WebSocket connection closed with exception %s', ws.exception())
     finally:
