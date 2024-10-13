@@ -103,6 +103,8 @@
   <div id="debugInfo"></div>
 
   <script>
+    const quality = 0.5;
+
     let ws;
     let localStream;
     let videoTrack;
@@ -201,7 +203,7 @@
         updateDebugInfo();
 
         requestVideoFrame(); // Request the next frame
-      }, 'image/jpeg', 0.1);
+      }, 'image/jpeg', quality);
     }
 
     function updateDebugInfo() {
