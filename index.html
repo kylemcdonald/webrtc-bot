@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-  <title>webrtc-bot</title>
+  <title>WebSocket Video Stream</title>
   <link rel="icon" href="data:,">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
@@ -17,6 +18,7 @@
       overflow: hidden;
       font-family: Arial, sans-serif;
     }
+
     #videoContainer {
       display: flex;
       justify-content: center;
@@ -24,14 +26,14 @@
       width: 100%;
       height: 80vh;
     }
-    #remoteVideo, #localVideo {
+
+    #localVideo,
+    #remoteVideo {
       height: 100%;
       width: 50%;
       object-fit: contain;
     }
-    #streamInfo {
-      display: none;
-    }
+
     #controls {
       position: fixed;
       top: 50%;
@@ -42,6 +44,7 @@
       flex-direction: column;
       align-items: center;
     }
+
     #videoDevices {
       margin-bottom: 20px;
       padding: 10px;
@@ -51,6 +54,7 @@
       border: 2px solid white;
       border-radius: 5px;
     }
+
     #startButton {
       padding: 15px 30px;
       font-size: 24px;
@@ -62,13 +66,16 @@
       transition: all 0.3s ease;
       touch-action: manipulation;
     }
+
     #startButton:hover {
       background-color: #333;
     }
+
     #startButton:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
+
     #debugInfo {
       position: fixed;
       bottom: 10px;
@@ -80,22 +87,10 @@
       font-family: monospace;
       font-size: 12px;
       z-index: 1000;
-      display: block; /* Always show debug info */
-    }
-    #keyBindings {
-      margin-top: 20px;
-      color: white;
-      text-align: center;
-    }
-    #keyBindings ul {
-      list-style-type: none;
-      padding: 0;
-    }
-    #keyBindings li {
-      margin: 5px 0;
     }
   </style>
 </head>
+
 <body>
   <div id="controls">
     <select id="videoDevices"></select>
@@ -103,30 +98,30 @@
   </div>
   <div id="videoContainer">
     <video id="localVideo" autoplay muted></video>
-    <video id="remoteVideo" autoplay></video>
+    <canvas id="remoteVideo"></canvas>
   </div>
-  <div id="streamInfo"></div>
   <div id="debugInfo"></div>
+
   <script>
-    var pc = null;
-    var localStream = null;
-    var servers = {
-      iceServers: [
-        // { urls: "stun:stun.l.google.com:19302" } // can help with NAT traversal
-      ]
-    };
-
-    var statsInterval;
-
-    var lastBytesSent = 0;
-    var lastBytesReceived = 0;
-    var lastTimestamp = 0;
+    let ws;
+    let localStream;
+    let videoTrack;
+    let canvas;
+    let ctx;
+    let startTime;
+    let frameCount = 0;
+    let bytesSent = 0;
+    let bytesReceived = 0;
+    let lastUpdateTime;
+    let lastBytesSent = 0;
+    let lastBytesReceived = 0;
+    let videoFrameCallbackId;
 
     async function enumerateDevices() {
       const deviceSelect = document.getElementById('videoDevices');
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(device => device.kind === 'videoinput');
-      
+
       videoDevices.forEach(device => {
         const option = document.createElement('option');
         option.value = device.deviceId;
@@ -137,117 +132,117 @@
 
     async function start() {
       const startButton = document.getElementById('startButton');
-      const videoDevices = document.getElementById('videoDevices');
-      
+      const deviceSelect = document.getElementById('videoDevices');
+
       startButton.textContent = 'Connecting...';
       startButton.disabled = true;
-      
-      pc = new RTCPeerConnection(servers);
 
-      pc.ontrack = function(event) {
-        var remoteVideo = document.getElementById('remoteVideo');
-        if (remoteVideo.srcObject !== event.streams[0]) {
-          remoteVideo.srcObject = event.streams[0];
-          // Hide controls when remote video starts
-          document.getElementById('controls').style.display = 'none';
-        }
-      };
-
-      const deviceSelect = document.getElementById('videoDevices');
       const selectedDeviceId = deviceSelect.value;
 
       localStream = await navigator.mediaDevices.getUserMedia({
-        video: { 
+        video: {
           deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-          width: 1080, 
-          height: 1080, 
-          frameRate: 30 
+          width: 1080,
+          height: 1080,
+          frameRate: 30
         },
         audio: false
       });
 
-      var localVideo = document.getElementById('localVideo');
+      const localVideo = document.getElementById('localVideo');
       localVideo.srcObject = localStream;
-      // Remove this line to always show local video
-      // localVideo.style.display = 'none'; // Hide local video initially
 
-      // Print out actual stream properties
-      const videoTrack = localStream.getVideoTracks()[0];
+      videoTrack = localStream.getVideoTracks()[0];
       const settings = videoTrack.getSettings();
-      document.getElementById('streamInfo').innerHTML = `
-        Actual stream properties:
-        Width: ${settings.width}px,
-        Height: ${settings.height}px,
-        Frame Rate: ${settings.frameRate}fps
+
+      canvas = document.createElement('canvas');
+      canvas.width = settings.width;
+      canvas.height = settings.height;
+      ctx = canvas.getContext('2d');
+
+      const remoteCanvas = document.getElementById('remoteVideo');
+      remoteCanvas.width = settings.width;
+      remoteCanvas.height = settings.height;
+      const remoteCtx = remoteCanvas.getContext('2d');
+
+      ws = new WebSocket(`wss://${window.location.host}/ws`);
+
+      ws.onopen = () => {
+        document.getElementById('controls').style.display = 'none';
+        startTime = Date.now();
+        requestVideoFrame();
+      };
+
+      ws.onmessage = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          remoteCtx.drawImage(img, 0, 0);
+          bytesReceived += event.data.size;
+          lastBytesReceived = event.data.size;
+          URL.revokeObjectURL(img.src);
+        };
+        img.src = URL.createObjectURL(new Blob([event.data], { type: 'image/jpeg' }));
+      };
+    }
+
+    function requestVideoFrame() {
+      videoFrameCallbackId = localVideo.requestVideoFrameCallback(processVideoFrame);
+    }
+
+    function processVideoFrame(now, metadata) {
+      ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        ws.send(blob);
+        bytesSent += blob.size;
+        lastBytesSent = blob.size;
+        frameCount++;
+        updateDebugInfo();
+
+        requestVideoFrame(); // Request the next frame
+      }, 'image/jpeg', 0.1);
+    }
+
+    function updateDebugInfo() {
+      const now = Date.now();
+      if (now - lastUpdateTime < 1000) return;
+
+      const elapsedTime = (now - startTime) / 1000;
+      const fps = (frameCount / elapsedTime).toFixed(2);
+      const sendBandwidthKbps = ((bytesSent / 1024) / elapsedTime).toFixed();
+      const receiveBandwidthKbps = ((bytesReceived / 1024) / elapsedTime).toFixed();
+      const lastBytesReceivedKb = (lastBytesReceived / 1024).toFixed();
+      const lastBytesSentKb = (lastBytesSent / 1024).toFixed();
+
+      const debugInfo = `
+        FPS: ${fps}
+        Send Bandwidth: ${sendBandwidthKbps} Kbps
+        Receive Bandwidth: ${receiveBandwidthKbps} Kbps
+        Last Sent: ${lastBytesSentKb} Kb
+        Last Received: ${lastBytesReceivedKb} Kb
+        Total Sent: ${(bytesSent / (1024 * 1024)).toFixed(2)} MB
+        Total Received: ${(bytesReceived / (1024 * 1024)).toFixed(2)} MB
       `;
 
-      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-
-      var offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      var response = await fetch('/offer', {
-        method: 'POST',
-        body: JSON.stringify(pc.localDescription),
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      var answer = await response.json();
-      await pc.setRemoteDescription(answer);
-
-      // Start collecting stats after connection is established
-      statsInterval = setInterval(getStats, 1000);
-    }
-
-    async function getStats() {
-      if (!pc) return;
-
-      const stats = await pc.getStats();
-      let debugInfo = '';
-      const currentTimestamp = Date.now();
-
-      stats.forEach(report => {
-        if (report.type === 'outbound-rtp' && report.kind === 'video') {
-          const bytesSentMB = (report.bytesSent / (1024 * 1024)).toFixed(2);
-          const sendBandwidth = calculateBandwidth(report.bytesSent, currentTimestamp, lastBytesSent, lastTimestamp);
-          debugInfo += `Tx ${report.frameWidth}x${report.frameHeight} @ ${report.framesPerSecond} fps ${sendBandwidth} (${bytesSentMB} MB)\n`;
-          lastBytesSent = report.bytesSent;
-        }
-        if (report.type === 'inbound-rtp' && report.kind === 'video') {
-          const bytesReceivedMB = (report.bytesReceived / (1024 * 1024)).toFixed(2);
-          const receiveBandwidth = calculateBandwidth(report.bytesReceived, currentTimestamp, lastBytesReceived, lastTimestamp);
-          debugInfo += `Rx ${report.frameWidth}x${report.frameHeight} @ ${report.framesPerSecond} fps ${receiveBandwidth} (${bytesReceivedMB} MB)\n`;
-          lastBytesReceived = report.bytesReceived;
-        }
-        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-          const timestamp = new Date(report.timestamp).toISOString();
-          debugInfo += `Round Trip: ${report.currentRoundTripTime * 1000}ms\n`;
-          debugInfo += `Available Outgoing Bitrate: ${Math.round(report.availableOutgoingBitrate / 1000)} kbps\n`;
-        }
-      });
-
-      lastTimestamp = currentTimestamp;
       document.getElementById('debugInfo').innerText = debugInfo;
+      lastUpdateTime = now;
     }
 
-    function calculateBandwidth(currentBytes, currentTimestamp, lastBytes, lastTimestamp) {
-      if (lastBytes === 0 || lastTimestamp === 0) {
-        return 'N/A';
+    function cleanup() {
+      if (ws) {
+        ws.close();
       }
-      
-      const bytesTransferred = currentBytes - lastBytes;
-      const timeElapsed = (currentTimestamp - lastTimestamp) / 1000; // Convert to seconds
-      
-      if (timeElapsed <= 0 || bytesTransferred < 0) {
-        return 'N/A';
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
       }
-      
-      const bandwidthKbps = (bytesTransferred * 8) / (timeElapsed * 1000);
-      return Math.round(bandwidthKbps) + ' kbps';
+      if (videoFrameCallbackId) {
+        localVideo.cancelVideoFrameCallback(videoFrameCallbackId);
+      }
     }
+
+    window.addEventListener('beforeunload', cleanup);
 
     enumerateDevices();
   </script>
 </body>
+
 </html>

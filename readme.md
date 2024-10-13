@@ -27,7 +27,7 @@
 
 4. Install the required dependencies:
    ```
-   pip install aiohttp aiortc opencv-python-headless numpy
+   pip install aiohttp opencv-python-headless numpy
    ```
 
 5. Generate SSL certificates (required for HTTPS):
