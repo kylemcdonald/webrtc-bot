@@ -3,7 +3,6 @@ import logging
 from aiohttp import web, WSMsgType
 import cv2
 import numpy as np
-import ssl
 import threading
 import queue
 
@@ -97,10 +96,7 @@ def main():
     app.router.add_get("/ws", websocket_handler)
     app.on_shutdown.append(on_shutdown)
 
-    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    ssl_context.load_cert_chain("cert.pem", "key.pem")
-
-    web.run_app(app, access_log=None, port=8443, ssl_context=ssl_context)
+    web.run_app(app, access_log=None, port=8080)
 
 
 if __name__ == "__main__":
