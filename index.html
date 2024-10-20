@@ -168,7 +168,8 @@
       remoteCanvas.height = settings.height;
       const remoteCtx = remoteCanvas.getContext('2d');
 
-      ws = new WebSocket(`wss://${window.location.host}/ws`);
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
 
       ws.onopen = () => {
         document.getElementById('controls').style.display = 'none';
