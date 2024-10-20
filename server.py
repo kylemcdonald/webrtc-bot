@@ -1,51 +1,16 @@
 import asyncio
 import logging
 from aiohttp import web, WSMsgType
-import cv2
-import numpy as np
+import zmq
+import zmq.asyncio
+import time
+import os
+from queue import Queue, Empty
 import threading
-import queue
-
-quality = 50
+from threading import Event
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("server")
-
-
-class ImageProcessor:
-    def __init__(self):
-        self.input_queue = queue.Queue(maxsize=1)
-        self.output_queue = queue.Queue(maxsize=1)
-        self.thread = threading.Thread(target=self.process_images)
-        self.thread.start()
-
-    def process_images(self):
-        while True:
-            try:
-                data = self.input_queue.get(timeout=1)
-                if data is None:
-                    break
-
-                # Decode the image
-                nparr = np.frombuffer(data, np.uint8)
-                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-                processed_img = cv2.bitwise_not(img)
-
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-                _, buffer = cv2.imencode(".jpg", processed_img, encode_param)
-                buffer = buffer.tobytes()
-
-                try:
-                    self.output_queue.put(buffer, block=False)
-                except queue.Full:
-                    pass
-            except queue.Empty:
-                pass
-
-    def stop(self):
-        self.input_queue.put(None)
-        self.thread.join()
 
 
 async def index(request):
@@ -53,51 +18,100 @@ async def index(request):
         content = f.read()
     return web.Response(content_type="text/html", text=content)
 
-
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    processor = ImageProcessor()
+    incoming_client_frames = request.app['incoming_client_frames']
+    processed_frames = request.app['processed_frames']
 
     try:
         async for msg in ws:
             if msg.type == WSMsgType.BINARY:
-                try:
-                    processor.input_queue.put(msg.data, block=False)
-                except queue.Full:
-                    pass
-
-                try:
-                    buffer = processor.output_queue.get(block=False)
-                    await ws.send_bytes(buffer)
-                except queue.Empty:
-                    pass
+                incoming_client_frames.put(msg.data)
+                while not processed_frames.empty():
+                    processed_frame = processed_frames.get()
+                    await ws.send_bytes(processed_frame)
             elif msg.type == WSMsgType.ERROR:
-                logger.error(
-                    "WebSocket connection closed with exception %s", ws.exception()
-                )
+                logger.error("WebSocket connection closed with exception %s", ws.exception())
     finally:
-        processor.stop()
+        pass
 
     return ws
 
-
 async def on_shutdown(app):
-    for ws in set(app["websockets"]):
+    print("Starting shutdown")
+    app['shutdown'].set()
+    for ws in set(app['websockets']):
         await ws.close(code=WSMsgType.CLOSE, message="Server shutdown")
-    app["websockets"].clear()
+    app['websockets'].clear()
+    app['distribute_thread'].join()
+    app['collect_thread'].join()
 
+def distribute_loop(app):
+    incoming_client_frames = app['incoming_client_frames']
+    
+    context = zmq.Context()
+    socket = context.socket(zmq.PUSH)
+    ipc_path = os.path.join(os.getcwd(), ".distribute_socket")
+    socket.bind(f"ipc://{ipc_path}")
+    socket.setsockopt(zmq.LINGER, 0)
+
+    while not app['shutdown'].is_set():
+        try:
+            frame = incoming_client_frames.get(timeout=1)
+            timestamp = time.time()
+            socket.send_multipart([str(timestamp).encode(), frame])
+        except Empty:
+            continue
+        
+    socket.close()
+    context.destroy()
+        
+def collect_loop(app):
+    processed_frames = app['processed_frames']
+    
+    context = zmq.Context()
+    socket = context.socket(zmq.PULL)
+    ipc_path = os.path.join(os.getcwd(), ".collect_socket")
+    socket.bind(f"ipc://{ipc_path}")
+    socket.setsockopt(zmq.RCVTIMEO, 1000)
+    socket.setsockopt(zmq.LINGER, 0)
+    
+    recent_timestamp = 0
+    while not app['shutdown'].is_set():
+        try:
+            timestamp, frame = socket.recv_multipart()
+            timestamp = float(timestamp)
+            if timestamp > recent_timestamp:
+                recent_timestamp = timestamp
+                processed_frames.put(frame)
+            else:
+                print(f"dropping out-of-order frame: {1000*(recent_timestamp - timestamp):.1f}ms late")
+        except zmq.Again:
+            continue
+
+    socket.close()
+    context.destroy()
+
+async def on_startup(app):
+    app['incoming_client_frames'] = Queue()
+    app['processed_frames'] = Queue()
+    app['shutdown'] = Event()
+    app['distribute_thread'] = threading.Thread(target=distribute_loop, args=(app,), daemon=True)
+    app['collect_thread'] = threading.Thread(target=collect_loop, args=(app,), daemon=True)
+    app['distribute_thread'].start()
+    app['collect_thread'].start()
 
 def main():
     app = web.Application()
-    app["websockets"] = set()
+    app['websockets'] = set()
     app.router.add_get("/", index)
     app.router.add_get("/ws", websocket_handler)
     app.on_shutdown.append(on_shutdown)
+    app.on_startup.append(on_startup)
 
     web.run_app(app, access_log=None, port=8080)
-
 
 if __name__ == "__main__":
     main()
