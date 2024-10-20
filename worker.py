@@ -6,10 +6,7 @@ import time
 import random
 
 
-def process_image(image_data, quality=50):
-    # if random.random() < 0.1:
-    #     time.sleep(0.5)
-    
+def process_image(image_data):
     # Decode the image
     nparr = np.frombuffer(image_data, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -18,7 +15,7 @@ def process_image(image_data, quality=50):
     processed_img = cv2.bitwise_not(img)
     
     # Encode the processed image
-    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 50]
     _, buffer = cv2.imencode(".jpg", processed_img, encode_param)
     return buffer.tobytes()
 
